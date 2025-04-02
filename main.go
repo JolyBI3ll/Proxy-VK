@@ -14,10 +14,10 @@ import (
 
 var (
 	caCert     tls.Certificate
-	baseDir    = "." // Базовая директория проекта
-	caCertPath = filepath.Join(baseDir, "demoCA", "cacert.pem")
-	caKeyPath  = filepath.Join(baseDir, "demoCA", "private", "cakey.pem")
-	crlPath    = filepath.Join(baseDir, "demoCA", "crl", "crl.pem")
+	baseDir    = "/app" // Фиксируем базовую директорию в контейнере
+	caCertPath = filepath.Join(baseDir, "proxy", "demoCA", "cacert.pem")
+	caKeyPath  = filepath.Join(baseDir, "proxy", "demoCA", "private", "cakey.pem")
+	crlPath    = filepath.Join(baseDir, "proxy", "demoCA", "crl", "crl.pem")
 )
 
 func main() {

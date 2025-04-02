@@ -1,0 +1,10 @@
+version: '3.8'
+
+services:
+  proxy:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./proxy/demoCA:/app/proxy/demoCA  # Монтируем CA-директорию
+    restart: unless-stopped
