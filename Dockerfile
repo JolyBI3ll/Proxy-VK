@@ -1,14 +1,16 @@
-FROM golang:1.23-alpine
+FROM golang:1.24-alpine
 
-RUN apk add --no-cache git openssl
+RUN apk add --no-cache git openssl ca-certificates
+
+COPY ./proxy/demoCA /app/proxy/demoCA
+
+COPY ./proxy/demoCA/cacert.pem /usr/local/share/ca-certificates/my-ca.crt
+RUN update-ca-certificates
 
 WORKDIR /app
-
-# Копируем ВСЕ файлы проекта (включая proxy/demoCA)
 COPY . .
 
-RUN go build -o proxy-server
+RUN go mod download && go build -o proxy-server
 
 EXPOSE 8080
-
 CMD ["./proxy-server"]
