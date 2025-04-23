@@ -7,55 +7,92 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
-	"errors"
+	"fmt"
 	"math/big"
 	"time"
 )
 
-func GenerateCertificate(domain string, caCert tls.Certificate) (tls.Certificate, error) {
-	caX509Cert, err := getX509Cert(caCert)
+const (
+	caMaxAge   = 10 * 365 * 24 * time.Hour
+	leafMaxAge = 24 * time.Hour
+	rsaKeySize = 2048
+)
+
+func GenCA(name string) ([]byte, []byte, error) {
+	now := time.Now()
+
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: name},
+		NotBefore:             now,
+		NotAfter:              now.Add(caMaxAge),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		MaxPathLen:            1,
+	}
+
+	priv, err := rsa.GenerateKey(rand.Reader, rsaKeySize)
 	if err != nil {
-		return tls.Certificate{}, err
+		return nil, nil, fmt.Errorf("ошибка генерации ключа: %w", err)
 	}
 
-	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
 	if err != nil {
-		return tls.Certificate{}, err
+		return nil, nil, fmt.Errorf("ошибка создания сертификата: %w", err)
 	}
 
-	template := x509.Certificate{
-		SerialNumber: big.NewInt(2),
-		Subject: pkix.Name{
-			CommonName: domain,
-		},
-		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:              []string{domain},
-		CRLDistributionPoints: []string{"http://127.0.0.1:8080/crl.pem"},
-	}
+	certPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: certDER,
+	})
 
-	derBytes, err := x509.CreateCertificate(
-		rand.Reader,
-		&template,
-		caX509Cert,
-		&privKey.PublicKey,
-		caCert.PrivateKey,
-	)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(priv),
+	})
 
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privKey)})
-
-	return tls.X509KeyPair(certPEM, keyPEM)
+	return certPEM, keyPEM, nil
 }
 
-func getX509Cert(tlsCert tls.Certificate) (*x509.Certificate, error) {
-	if len(tlsCert.Certificate) == 0 {
-		return nil, errors.New("no certificates found")
+func GenCert(ca *tls.Certificate, names []string) (*tls.Certificate, error) {
+	if ca.Leaf == nil {
+		leaf, err := x509.ParseCertificate(ca.Certificate[0])
+		if err != nil {
+			return nil, fmt.Errorf("ошибка разбора CA сертификата: %w", err)
+		}
+		ca.Leaf = leaf
 	}
-	return x509.ParseCertificate(tlsCert.Certificate[0])
+
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return nil, fmt.Errorf("ошибка генерации серийного номера: %w", err)
+	}
+
+	tmpl := &x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: names[0]},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(leafMaxAge),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:              names,
+		BasicConstraintsValid: true,
+	}
+
+	priv, err := rsa.GenerateKey(rand.Reader, rsaKeySize)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка генерации ключа: %w", err)
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, ca.Leaf, &priv.PublicKey, ca.PrivateKey)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка создания сертификата: %w", err)
+	}
+
+	return &tls.Certificate{
+		Certificate: [][]byte{certDER},
+		PrivateKey:  priv,
+		Leaf:        tmpl,
+	}, nil
 }
